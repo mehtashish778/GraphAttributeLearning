@@ -1,0 +1,56 @@
+experiment:
+  id: exp_clip_dino_gnn_v1
+  description: CLIP+DINO fusion with bipartite GNN and BCE+InfoNCE.
+  tags:
+    - baseline_c_plus_gnn
+    - adjective_embedding
+    - visual_genome
+
+defaults:
+  dataset: configs/dataset.yaml
+  model: configs/model.yaml
+  train: configs/train.yaml
+  eval: configs/eval.yaml
+
+baseline_runs:
+  - name: baseline_a_clip_only_mlp
+    overrides:
+      encoders.clip.enabled: true
+      encoders.dino.enabled: false
+      graph.variant: none
+      gnn.type: none
+  - name: baseline_b_dino_only_mlp
+    overrides:
+      encoders.clip.enabled: false
+      encoders.dino.enabled: true
+      graph.variant: none
+      gnn.type: none
+  - name: baseline_c_clip_dino_mlp
+    overrides:
+      encoders.clip.enabled: true
+      encoders.dino.enabled: true
+      graph.variant: none
+      gnn.type: none
+
+main_run:
+  name: proposed_clip_dino_gnn
+  overrides:
+    graph.variant: bipartite
+    gnn.type: gat
+    attribute_nodes.init_type: clip_text
+
+ablation_runs:
+  - name: graph_enriched_with_attribute_priors
+    overrides:
+      graph.variant: enriched
+      graph.include_attribute_priors: true
+  - name: trainable_attribute_nodes
+    overrides:
+      attribute_nodes.init_type: trainable
+  - name: bce_only
+    overrides:
+      loss.contrastive.enabled: false
+  - name: partial_encoder_finetune
+    overrides:
+      training.stage2.enabled: true
+      training.stage2.unfreeze_top_n_layers: 4

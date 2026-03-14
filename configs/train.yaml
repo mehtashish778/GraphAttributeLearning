@@ -1,0 +1,64 @@
+run:
+  seed: 42
+  deterministic: true
+  experiment_name: clip_dino_gnn_bipartite
+  output_dir: outputs
+  save_every_n_epochs: 1
+
+training:
+  stage1:
+    enabled: true
+    epochs: 20
+    freeze_encoders: true
+    lr_head: 0.001
+    lr_encoder: 0.0
+  stage2:
+    enabled: true
+    epochs: 20
+    freeze_encoders: false
+    unfreeze_top_n_layers: 2
+    lr_head: 0.0005
+    lr_encoder: 0.00001
+
+optimization:
+  optimizer: adamw
+  weight_decay: 0.0001
+  betas:
+    - 0.9
+    - 0.999
+  grad_clip_norm: 1.0
+  gradient_accumulation_steps: 1
+  mixed_precision: true
+
+scheduler:
+  type: cosine_with_warmup
+  warmup_ratio: 0.1
+  min_lr: 0.0000001
+
+batching:
+  batch_size: 32
+  eval_batch_size: 64
+
+loss:
+  bce:
+    enabled: true
+    pos_weight_mode: inverse_frequency
+  contrastive:
+    enabled: true
+    type: infonce
+    temperature: 0.07
+    lambda: 0.1
+    positive_sampling: same_adjective_group
+    negative_sampling: conflicting_groups
+
+early_stopping:
+  enabled: true
+  monitor: val_map
+  mode: max
+  patience: 8
+
+checkpoint:
+  enabled: true
+  monitor: val_map
+  mode: max
+  save_best_only: true

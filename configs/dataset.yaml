@@ -1,0 +1,57 @@
+project:
+  name: adjective_aware_embedding
+  task: multi_label_attribute_prediction
+  primary_object_class: chair
+
+dataset:
+  name: visual_genome
+  root_dir: data/raw/visual_genome
+  processed_dir: data/processed/visual_genome
+  cache_dir: data/cache
+  image_size: 224
+  num_workers: 8
+  pin_memory: true
+
+splits:
+  train: 0.8
+  val: 0.1
+  test: 0.1
+  stratify_by_attribute_groups: true
+  split_seed: 42
+
+attributes:
+  groups:
+    color:
+      - blue
+      - red
+      - white
+      - black
+    material:
+      - wooden
+      - plastic
+      - metal
+    condition:
+      - broken
+      - clean
+      - dirty
+      - old
+  min_support: 200
+  lowercase: true
+  lemmatize: true
+  synonym_map:
+    wood: wooden
+    damaged: broken
+
+filtering:
+  drop_empty_labels: true
+  deduplicate_images: true
+  keep_only_primary_object: chair
+  max_samples_per_attribute: null
+
+augmentation:
+  enabled: true
+  horizontal_flip_prob: 0.5
+  color_jitter_prob: 0.2
+  random_resized_crop_scale:
+    - 0.8
+    - 1.0

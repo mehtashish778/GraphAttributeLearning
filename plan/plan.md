@@ -1,335 +1,340 @@
-# Adjective-Aware Object Embedding using CLIP, DINOv2, and Graph Neural Networks
+# Adjective-Aware Object Embedding
 
-## 1. Project Objective
+## 1) Goal and Scope
 
-Build a system that learns **adjectives associated with objects** (e.g.,
-chairs) and reshapes the embedding space so objects cluster based on
-attributes like:
+Build an adjective-aware representation pipeline for object images (starting with `chair`) that:
 
--   broken
--   blue
--   wooden
--   plastic
--   dirty
--   metal
+- predicts multi-label attributes (for example `broken`, `blue`, `wooden`, `plastic`)
+- reshapes embedding space so items cluster by adjectives, not only by object identity
+- supports both offline analysis (embedding quality) and online inference (attribute scoring)
 
-Encoders used: - CLIP Vision Encoder - DINOv2 Vision Encoder - Graph
-Neural Network layer for attribute reasoning
+Initial scope is single-object class (`chair`) to de-risk data and modeling, then generalize to multi-class.
 
-------------------------------------------------------------------------
+---
 
-## 2. System Architecture
+## 2) Target Outcomes (Definition of Done)
 
-Image │ ├── CLIP Encoder ├── DINOv2 Encoder │ └── Feature Fusion │ ▼
-Object Embedding │ ▼ Graph Construction │ ▼ Graph Neural Network │ ▼
-Adjective-aware embedding │ ▼ Attribute prediction
+The project is complete when all conditions below are met:
 
-------------------------------------------------------------------------
+- **Model quality**
+  - mAP improves over baseline by >= 8-12% relative.
+  - Macro-F1 improves over baseline by >= 5% relative.
+  - At least 4 key attributes (`broken`, `blue`, `wooden`, `plastic`) achieve per-class AP >= 0.70 on validation (adjustable by data quality).
+- **Embedding quality**
+  - UMAP/t-SNE shows tighter adjective clusters than baseline.
+  - Retrieval@K for same-adjective neighbors is measurably improved.
+- **Engineering quality**
+  - Reproducible training with fixed seeds and config-driven runs.
+  - End-to-end training + inference scripts run without manual edits.
+  - Experiment logs and checkpoints are versioned and comparable.
 
-## 3. Encoders
+---
 
-### CLIP Vision Encoder
+## 3) Technical Strategy
 
-Common models: - ViT-B/32 - ViT-L/14
+### 3.1 Core Idea
 
-Output embedding size: 512--768
+Use a dual-encoder visual backbone:
 
-Benefits: - aligned with language - semantic understanding
+- CLIP image features (semantic alignment)
+- DINOv2 image features (visual structure)
 
-### DINOv2 Encoder
+Fuse both features and perform message passing over an object-attribute graph, where:
 
-Common models: - vit-small - vit-base - vit-large
+- object nodes use fused visual features
+- attribute nodes use CLIP text embeddings (or learnable vectors as ablation)
+- edges encode object-attribute membership (+ optional attribute-attribute priors)
 
-Output embedding size: 768--1024
+### 3.2 Modeling Choice Rationale
 
-Benefits: - strong visual structure representation - self-supervised
-learning
+- CLIP alone is strong semantically but can miss fine visual states.
+- DINOv2 adds complementary visual detail.
+- GNN introduces relational inductive bias, useful for correlated attributes (`plastic` with `material`, `broken` with `damage`).
 
-------------------------------------------------------------------------
+### 3.3 Baselines (Mandatory)
 
-## 4. Feature Fusion
+Implement before full GNN rollout:
 
-clip_embedding = CLIP(image)\
-dino_embedding = DINO(image)
+1. **Baseline A:** CLIP-only + MLP multi-label head
+2. **Baseline B:** DINO-only + MLP multi-label head
+3. **Baseline C:** CLIP+DINO fusion + MLP head (no graph)
+4. **Proposed:** CLIP+DINO + GNN
 
-combined_embedding = concat(clip_embedding, dino_embedding)
+All gains must be reported against Baseline C to isolate graph contribution.
 
-Typical dimension:
+---
 
-1536
+## 4) Data Strategy
 
-------------------------------------------------------------------------
+## 4.1 Dataset Selection (Phase-1 Priority)
 
-## 5. Graph Design
+Use this order:
 
-Graph nodes:
+1. **Visual Genome** (object + attributes, fastest path for graph supervision)
+2. **MIT States / SUN Attributes** (state-centric signals, useful for adjective robustness)
+3. **Open Images V7** (scale-up if labels fit target adjectives)
 
-Object nodes\
-Attribute nodes
+Avoid LAION in Phase-1 training due to noisy weak labels; use only for optional pretraining or pseudo-label mining.
 
-Example:
+## 4.2 Label Taxonomy
 
-Objects: chair_1 chair_2 chair_3
+Normalize attributes into controlled groups:
 
-Attributes: blue broken wooden plastic dirty metal
+- **Color:** blue, red, white, black, ...
+- **Material:** wooden, plastic, metal, ...
+- **Condition/State:** broken, clean, dirty, old, ...
 
-Edges:
+Rules:
 
-chair → blue\
-chair → broken\
-chair → plastic
+- lowercase, lemmatized labels
+- synonym merge (`wood` -> `wooden`, `damaged` -> `broken` when valid)
+- keep only attributes with minimum support threshold (for example >= 200 samples)
 
-Optional attribute relations:
+## 4.3 Data Splits
 
-plastic ↔ material\
-blue ↔ color\
-broken ↔ damage
+- train/val/test by image IDs (no leakage)
+- stratified split by high-level attribute groups
+- maintain long-tail report for rare attributes
 
-------------------------------------------------------------------------
+## 4.4 Data Quality Gates
 
-## 6. Node Features
+Before model training, enforce:
 
-### Object nodes
+- duplicate image check
+- invalid/empty label filtering
+- per-attribute frequency report
+- noisy label audit on random sample (manual spot check)
 
-Feature = fused embedding
+---
 
-dimension = 1536
+## 5) Graph Construction Plan
 
-### Attribute nodes
+## 5.1 Graph Types
 
-Option 1 (recommended)
+Build two graph variants for experiments:
 
-Use CLIP text embeddings:
+- **Variant 1 (Bipartite):** object <-> attribute
+- **Variant 2 (Enriched):** object <-> attribute + attribute <-> attribute priors
 
-"a blue chair"\
-"a broken chair"\
-"a wooden chair"
+Start with Variant 1 for stability, then ablate Variant 2.
 
-Option 2
+## 5.2 Node Features
 
-Learn attribute embeddings (trainable vectors)
+- **Object node:** fused visual embedding (`[clip || dino]`)
+- **Attribute node (default):** CLIP text embedding from prompt template:
+  - `a {attribute} chair`
+- **Attribute node (ablation):** trainable vectors
 
-------------------------------------------------------------------------
+## 5.3 Edge Weights
 
-## 7. GNN Model
+Use weighted edges for confidence:
 
-Suggested architecture:
+- labeled positive edge: weight = 1.0
+- weak/pseudo edge (if used): weight in `[0.3, 0.8]`
+- optional attribute prior edge from co-occurrence PMI or normalized co-frequency
 
-GATConv(input_dim,512)\
-ReLU\
-GATConv(512,256)\
-Linear(256,1)
+---
 
-Prediction is computed from attribute nodes.
+## 6) Model Architecture
 
-------------------------------------------------------------------------
+## 6.1 Feature Fusion
 
-## 8. Training Objectives
+Start with concatenation:
 
-### Attribute Prediction
+- `z = concat(z_clip, z_dino)`
 
-Multi‑label classification
+Then ablate:
 
-Loss:
+- gated fusion (`z = g * z_clip + (1 - g) * z_dino`)
+- projected fusion (linear layers to shared dimension before concat)
 
-Binary Cross Entropy
+## 6.2 GNN Head
 
-Example label:
+Recommended start:
 
-chair_1: broken=1\
-blue=0\
-plastic=1
+- `GATConv(input_dim -> 512, heads=4)`
+- `ReLU + Dropout(0.2)`
+- `GATConv(512 -> 256, heads=2)`
+- `Linear(256 -> num_attributes)` for object-node logits
 
-### Contrastive Embedding Loss
+Alternative for stability if needed: GraphSAGE.
 
-Encourage clustering by adjectives.
+## 6.3 Loss Design
 
-Example:
+Primary:
 
-Positive pair: blue chair A blue chair B
+- weighted BCE with class-frequency weights
 
-Negative pair: blue chair vs broken chair
+Secondary:
 
-Loss options: - Triplet loss - Contrastive loss - InfoNCE
+- contrastive / InfoNCE on object embeddings:
+  - positives: same adjective group
+  - negatives: conflicting adjective groups
 
-------------------------------------------------------------------------
+Total:
 
-## 9. Datasets
+- `L = L_bce + lambda_contrast * L_contrast`
 
-### Visual Genome
+Tune `lambda_contrast` in `{0.05, 0.1, 0.2}`.
 
-\~108k images with objects, attributes, and relationships.
+---
 
-Example annotation:
+## 7) Training Strategy
 
-chair → wooden\
-chair → old
+## 7.1 Two-Stage Optimization
 
-Download: https://visualgenome.org
+Stage 1:
 
-------------------------------------------------------------------------
+- freeze CLIP and DINO encoders
+- train fusion + GNN head
 
-### Open Images V7
+Stage 2:
 
-\~9M images with detection and attribute labels.
+- unfreeze top N layers of encoders (N configurable)
+- fine-tune with lower LR for encoders
 
-Example:
+This reduces instability and GPU cost early.
 
-chair → plastic\
-chair → old
+## 7.2 Hyperparameter Defaults
 
-Download: https://storage.googleapis.com/openimages/web/index.html
+- optimizer: AdamW
+- LR head: `1e-3`
+- LR encoder: `1e-5` (stage 2)
+- weight decay: `1e-4`
+- batch size: maximize stable GPU usage (target 32+ effective via grad accumulation)
+- epochs: 30-60 with early stopping on val mAP
 
-------------------------------------------------------------------------
+## 7.3 Training Controls
 
-### MIT States Dataset
+- deterministic seed support
+- mixed precision enabled
+- gradient clipping (`1.0`)
+- checkpoint by best val mAP
+- scheduler: cosine decay with warmup
 
-Object‑state dataset.
+---
 
-Examples:
+## 8) Evaluation Strategy
 
-broken chair\
-painted chair\
-clean chair
+## 8.1 Core Metrics
 
-------------------------------------------------------------------------
+- mAP (primary)
+- Macro-F1 and Micro-F1
+- per-attribute AP and F1
+- calibration metrics (ECE / reliability bins) if serving probabilities
 
-### SUN Attribute Dataset
+## 8.2 Embedding Metrics
 
-Dataset containing \~102 visual attributes.
+- retrieval precision@K for same-adjective neighbors
+- cluster compactness/separation (silhouette on adjective labels)
+- UMAP/t-SNE visual audits (fixed random seed)
 
-Examples:
+## 8.3 Error Analysis
 
-rusty\
-shiny\
-old\
-colorful
+Every run should include:
 
-------------------------------------------------------------------------
+- top false positives and false negatives per attribute
+- confusion among correlated materials/colors
+- performance by attribute frequency bucket (head/mid/tail)
 
-### COCO Dataset
+---
 
-Object detection dataset (\~330k images).
+## 9) Ablation Matrix (Required)
 
-Attributes must be manually annotated.
+Minimum experiment grid:
 
-Download: https://cocodataset.org
+1. CLIP-only vs DINO-only vs fused
+2. no-graph vs bipartite graph vs enriched graph
+3. text-initialized attribute nodes vs trainable attribute nodes
+4. BCE only vs BCE + contrastive
+5. frozen encoders vs partial fine-tuning
 
-------------------------------------------------------------------------
+Keep one variable changed per ablation for clean conclusions.
 
-### LAION‑400M
+---
 
-Large image‑text dataset with captions.
+## 10) Execution Sequence (No Timeline)
 
-Example captions:
+### Phase A: Data and Baselines
 
-"a broken plastic chair"\
-"a blue chair"
+- finalize attribute taxonomy and label normalization
+- build data loader + split pipeline
+- train Baseline A/B/C
+- output: baseline report and dataset diagnostics
 
-Attributes can be extracted using NLP.
+### Phase B: Graph Pipeline
 
-Download: https://laion.ai
+- implement graph builder (Variant 1)
+- train GNN model with frozen encoders
+- evaluate against Baseline C
+- output: first graph-vs-no-graph comparison
 
-------------------------------------------------------------------------
+### Phase C: Optimization and Ablations
 
-### ImageNet‑Attribute variants
+- run stage-2 fine-tuning
+- run required ablations
+- tune `lambda_contrast`, fusion, graph depth
+- output: ablation table + selected final config
 
-Researchers often annotate ImageNet objects with attributes such as:
+### Phase D: Robustness and Packaging
 
-metal\
-wooden\
-colorful
+- run long-tail and error analysis
+- package inference script, checkpoints, and reproducibility docs
+- add minimal Gradio demo interface for inference
+- generate final report with metrics and visualizations
+- output: final model + execution docs + demo outputs
 
-Useful for transfer learning.
+Gradio demo is an end-stage task and starts only after training, ablations, and final model selection are complete.
 
-------------------------------------------------------------------------
+---
 
-## 10. Data Preparation
+## 11) Repository Execution Structure
 
-Dataset pipeline:
+Suggested structure:
 
-images ↓ object detection (chair) ↓ extract attributes ↓ build
-object‑attribute graph
+- `configs/` (dataset/model/train/eval yaml)
+- `data/` (raw + processed metadata, ignore large binaries in git)
+- `src/encoders/` (clip, dino wrappers)
+- `src/graph/` (graph builder, priors, batching)
+- `src/models/` (fusion, gnn heads, mlp baselines)
+- `src/train/` (trainer, losses, schedulers)
+- `src/eval/` (metrics, retrieval, visualization)
+- `scripts/` (train, eval, infer)
+- `reports/` (experiment tables, plots, analysis)
 
-Example dataset:
+---
 
-dataset/ chair_001.jpg chair_002.jpg
+## 12) Risks and Mitigations
 
-labels:
+- **Risk:** label noise in attributes  
+  **Mitigation:** filtering, confidence weights, manual audit sample.
 
-chair_001.jpg → \[blue,plastic\]\
-chair_002.jpg → \[broken,wooden\]
+- **Risk:** class imbalance hurts rare adjectives  
+  **Mitigation:** weighted BCE, focal loss fallback, frequency-aware sampling.
 
-------------------------------------------------------------------------
+- **Risk:** overfitting with small attribute subsets  
+  **Mitigation:** stronger augmentation, early stopping, regularization.
 
-## 11. Training Pipeline
+- **Risk:** graph complexity without measurable gain  
+  **Mitigation:** enforce baseline comparison and remove graph if gain is negligible.
 
-Image ↓ CLIP encoder ↓ DINOv2 encoder ↓ feature fusion ↓ graph
-construction ↓ GNN forward pass ↓ attribute prediction ↓ loss
-computation ↓ backpropagation
+---
 
-------------------------------------------------------------------------
+## 13) Final Deliverables
 
-## 12. Inference Pipeline
+- trained adjective-aware embedding model
+- reproducible training and inference pipeline
+- ablation and baseline comparison report
+- embedding visualization and retrieval analysis
+- concise model card (dataset, metrics, limits, known failure cases)
+- minimal Gradio demo app for interactive attribute prediction
 
-New Image ↓ CLIP + DINO ↓ embedding fusion ↓ graph node creation ↓ GNN
-inference ↓ attribute scores
+---
 
-Example output:
+## 14) Immediate Next Actions
 
-broken: 0.91\
-blue: 0.12\
-plastic: 0.87\
-wooden: 0.04
-
-------------------------------------------------------------------------
-
-## 13. Evaluation
-
-Metrics:
-
--   mean average precision
--   F1 score
--   multi‑label accuracy
-
-Embedding analysis:
-
--   t‑SNE
--   UMAP
-
-Goal: observe clusters based on adjectives.
-
-------------------------------------------------------------------------
-
-## 14. Future Extensions
-
-Graph Transformer instead of GNN.
-
-Scene graph learning:
-
-chair → broken → leg
-
-LLM integration to generate descriptions:
-
-"This is a broken blue plastic chair."
-
-------------------------------------------------------------------------
-
-## 15. Deliverables
-
--   adjective aware embedding model
--   attribute prediction model
--   graph dataset
--   clustering visualizations
-
-------------------------------------------------------------------------
-
-## 16. Summary
-
-The system combines:
-
-CLIP semantic features\
-DINOv2 visual features\
-Graph neural network reasoning
-
-to produce an **embedding space structured by object adjectives**.
+1. Lock Phase-1 dataset (`Visual Genome`) and attribute list.
+2. Implement data normalization and split scripts.
+3. Train Baseline C (`CLIP+DINO+MLP`) as reference.
+4. Build bipartite graph constructor and run first GNN experiment.
+5. Record metrics in a single comparison table from day one.

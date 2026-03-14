@@ -1,0 +1,64 @@
+model:
+  name: clip_dino_gnn
+  num_attributes: 12
+  primary_object_class: chair
+
+encoders:
+  clip:
+    enabled: true
+    model_name: ViT-B-32
+    pretrained: true
+    output_dim: 512
+    freeze_stage1: true
+  dino:
+    enabled: true
+    model_name: vit_base_patch14_dinov2
+    pretrained: true
+    output_dim: 768
+    freeze_stage1: true
+
+fusion:
+  type: concat
+  output_dim: 1280
+  projected_fusion:
+    enabled: false
+    hidden_dim: 512
+  gated_fusion:
+    enabled: false
+    hidden_dim: 512
+
+graph:
+  variant: bipartite
+  include_attribute_priors: false
+  edge_weighting:
+    labeled_positive: 1.0
+    weak_min: 0.3
+    weak_max: 0.8
+
+attribute_nodes:
+  init_type: clip_text
+  prompt_template: "a {attribute} chair"
+  trainable_dim: 256
+
+gnn:
+  type: gat
+  layers:
+    - in_dim: 1280
+      out_dim: 512
+      heads: 4
+      dropout: 0.2
+    - in_dim: 512
+      out_dim: 256
+      heads: 2
+      dropout: 0.2
+  classifier:
+    in_dim: 256
+    out_dim: 12
+
+baseline_heads:
+  mlp:
+    enabled: true
+    hidden_dims:
+      - 512
+      - 256
+    dropout: 0.2
