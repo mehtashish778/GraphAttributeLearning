@@ -7,6 +7,14 @@ import gradio as gr
 import torch
 from PIL import Image
 
+import sys
+from pathlib import Path as _Path
+
+ROOT = _Path(__file__).resolve().parent
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 from infer.pipeline import LoadedModel, load_checkpoint, predict_image
 
 
