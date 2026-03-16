@@ -6,13 +6,13 @@ model:
 encoders:
   clip:
     enabled: true
-    model_name: ViT-B-32
+    model_name: vit_base_patch16_clip_224.openai
     pretrained: true
     output_dim: 512
     freeze_stage1: true
   dino:
     enabled: true
-    model_name: vit_base_patch14_dinov2
+    model_name: vit_base_patch14_dinov2.lvd142m
     pretrained: true
     output_dim: 768
     freeze_stage1: true

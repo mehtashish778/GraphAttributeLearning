@@ -4,6 +4,10 @@ run:
   experiment_name: clip_dino_gnn_bipartite
   output_dir: outputs
   save_every_n_epochs: 1
+  smoke_profile:
+    epochs: 2
+    batch_size: 8
+    eval_batch_size: 8
 
 training:
   stage1:

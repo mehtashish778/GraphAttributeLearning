@@ -1,0 +1,86 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Packaging / build
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage / tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and runtime files
+*.log
+*.out
+*.err
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+
+# ML data and artifacts
+data/raw/
+data/processed/
+checkpoints/
+runs/
+outputs/
+artifacts/
+
+.jpeg
+.jpg
+.png
+.gif
+.bmp
+.tiff
+.ico
+.webp
+.svg
+.heic
+.heif
+.heif-srgb
+.heif-srgb-alpha
+.heif-srgb-alpha-alpha

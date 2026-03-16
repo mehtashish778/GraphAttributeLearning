@@ -11,12 +11,58 @@ dataset:
   image_size: 224
   num_workers: 8
   pin_memory: true
+  expected_primary_object_class: chair
+
+download:
+  enabled: true
+  force_download: false
+  timeout_seconds: 120
+  retries: 3
+  chunk_size_bytes: 1048576
+  artifacts:
+    - name: images_metadata
+      url: https://homes.cs.washington.edu/~ranjay/visualgenome/data/dataset/image_data.json.zip
+      filename: image_data.json.zip
+      sha256: null
+    - name: objects
+      url: https://homes.cs.washington.edu/~ranjay/visualgenome/data/dataset/objects.json.zip
+      filename: objects.json.zip
+      sha256: null
+    - name: attributes
+      url: https://homes.cs.washington.edu/~ranjay/visualgenome/data/dataset/attributes.json.zip
+      filename: attributes.json.zip
+      sha256: null
+
+extraction:
+  enabled: true
+  force_extract: false
+  safe_extract: true
+  marker_file: .extract_complete
+  archives:
+    - image_data.json.zip
+    - objects.json.zip
+    - attributes.json.zip
+
+processing:
+  output_format: parquet
+  csv_fallback: true
+  processing_report_file: processing_report.json
+  label_vocab_file: label_vocab.json
+  label_frequency_file: label_frequencies.json
+  samples_file_parquet: samples.parquet
+  samples_file_csv: samples.csv
+  split_dir: splits
+  unknown_label_token: __unknown__
+  keep_unmapped_attributes: false
+  strict_chair_only: true
 
 splits:
   train: 0.8
   val: 0.1
   test: 0.1
   stratify_by_attribute_groups: true
+  multilabel_stratify: true
+  stratify_fallback: iterative_bucket
   split_seed: 42
 
 attributes:
