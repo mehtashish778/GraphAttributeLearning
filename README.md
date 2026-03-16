@@ -105,14 +105,25 @@ Important: the processing pipeline is strict chair-only (`primary_object_class: 
 
 ### 2) Train/Evaluate Models
 
-This repo provides dataset + experiment configs. Connect model training to your entrypoints (for example `scripts/train.py` and `scripts/eval.py`).
+#### Baseline (CLIP/DINO + MLP)
 
-Typical flow:
+- Smoke run (quick sanity check):
 
-1. Run baseline experiments from `configs/experiment.yaml`.
-2. Run the proposed GNN experiment.
-3. Run ablation experiments.
-4. Compare all runs in one metrics table.
+  `python scripts/train_baseline.py --run-name smoke_baseline --mode smoke --device auto`
+
+- Full run:
+
+  `python scripts/train_baseline.py --run-name baseline_full --mode full --device auto`
+
+#### GNN (CLIP/DINO + bipartite native GNN)
+
+- GNN smoke run:
+
+  `python scripts/train_gnn.py --run-name smoke_gnn --mode smoke --device auto`
+
+- Compare baseline vs GNN (after both smoke runs complete):
+
+  `python scripts/compare_baseline_vs_gnn.py --baseline-run smoke_baseline --gnn-run smoke_gnn`
 
 ## Expected Outputs
 

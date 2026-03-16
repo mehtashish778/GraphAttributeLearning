@@ -33,18 +33,19 @@ from train.dataset import (  # noqa: E402
     split_paths,
 )
 from train.encoders import build_backbones  # noqa: E402
+from train.graph_builder import build_bipartite_batch  # noqa: E402
+from train.graph_models import NativeGNNClassifier  # noqa: E402
 from train.losses import bce_logits_loss  # noqa: E402
 from train.metrics import compute_metrics  # noqa: E402
-from train.models import BaselineClassifier  # noqa: E402
 
 
 def log(message: str) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [train_baseline] {message}", flush=True)
+    print(f"[{ts}] [train_gnn] {message}", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train baseline model (A/B/C).")
+    parser = argparse.ArgumentParser(description="Train GNN model (bipartite graph).")
     parser.add_argument("--dataset-config", type=Path, default=REPO_ROOT / "configs" / "dataset.yaml")
     parser.add_argument("--model-config", type=Path, default=REPO_ROOT / "configs" / "model.yaml")
     parser.add_argument("--train-config", type=Path, default=REPO_ROOT / "configs" / "train.yaml")
@@ -94,6 +95,12 @@ def build_loaders(cfg: Dict[str, Any], batch_size: int, eval_batch_size: int, sm
     val_ds = ChairAttributeDataset(splits["val"], label_vocab_path, REPO_ROOT, cache_dir)
     test_ds = ChairAttributeDataset(splits["test"], label_vocab_path, REPO_ROOT, cache_dir)
 
+    if smoke:
+        # Cap samples for faster smoke training.
+        train_ds.samples = train_ds.samples[:512]
+        val_ds.samples = val_ds.samples[:128]
+        test_ds.samples = test_ds.samples[:128]
+
     num_workers = int(cfg["dataset"].get("num_workers", 0))
     if smoke:
         num_workers = min(num_workers, 8)
@@ -122,7 +129,11 @@ def build_loaders(cfg: Dict[str, Any], batch_size: int, eval_batch_size: int, sm
     return train_loader, val_loader, test_loader, {"vocab": label_vocab, "freq": label_freq}
 
 
-def build_model(cfg: Dict[str, Any], num_labels: int, device: torch.device) -> BaselineClassifier:
+def build_backbone_and_gnn(
+    cfg: Dict[str, Any],
+    num_labels: int,
+    device: torch.device,
+) -> Tuple[torch.nn.Module, NativeGNNClassifier, int]:
     use_clip = bool(cfg["encoders"]["clip"]["enabled"])
     use_dino = bool(cfg["encoders"]["dino"]["enabled"])
     clip_name = str(cfg["encoders"]["clip"].get("model_name", "vit_base_patch16_clip_224.openai"))
@@ -140,29 +151,56 @@ def build_model(cfg: Dict[str, Any], num_labels: int, device: torch.device) -> B
         clip_pretrained=bool(cfg["encoders"]["clip"].get("pretrained", True)),
         dino_pretrained=bool(cfg["encoders"]["dino"].get("pretrained", True)),
     )
-    hidden_dims = list(cfg["baseline_heads"]["mlp"].get("hidden_dims", [512, 256]))
-    dropout = float(cfg["baseline_heads"]["mlp"].get("dropout", 0.2))
-    model = BaselineClassifier(
-        clip_backbone=clip_backbone,
-        dino_backbone=dino_backbone,
-        feature_dim=feature_dim,
+
+    class BackboneWrapper(torch.nn.Module):
+        def __init__(self, clip_module: torch.nn.Module | None, dino_module: torch.nn.Module | None) -> None:
+            super().__init__()
+            self.clip_module = clip_module
+            self.dino_module = dino_module
+
+        def encode(self, images: List[Any], device: torch.device) -> torch.Tensor:
+            feats: List[torch.Tensor] = []
+            if self.clip_module is not None:
+                feats.append(self.clip_module.forward_pil(images, device=device))
+            if self.dino_module is not None:
+                feats.append(self.dino_module.forward_pil(images, device=device))
+            if len(feats) == 1:
+                return feats[0]
+            return torch.cat(feats, dim=1)
+
+    backbone = BackboneWrapper(clip_backbone, dino_backbone).to(device)
+
+    hidden_dims = [layer_cfg["out_dim"] for layer_cfg in cfg["gnn"]["layers"]]
+    dropout = float(cfg["gnn"].get("dropout", 0.2))
+    gnn_model = NativeGNNClassifier(
+        in_dim=feature_dim,
         hidden_dims=hidden_dims,
+        num_attributes=num_labels,
         dropout=dropout,
-        num_labels=num_labels,
-    )
-    model.freeze_backbones()
-    return model.to(device)
+    ).to(device)
+
+    return backbone, gnn_model, feature_dim
 
 
-def run_eval(model: BaselineClassifier, loader: Any, device: torch.device, pos_weight: torch.Tensor) -> Dict[str, Any]:
-    model.eval()
+def run_eval(
+    backbone: torch.nn.Module,
+    gnn_model: NativeGNNClassifier,
+    loader: Any,
+    device: torch.device,
+    pos_weight: torch.Tensor,
+) -> Dict[str, Any]:
+    backbone.eval()
+    gnn_model.eval()
     all_logits: List[np.ndarray] = []
     all_targets: List[np.ndarray] = []
     losses: List[float] = []
     with torch.no_grad():
         for batch in loader:
             targets = batch["targets"].to(device)
-            logits = model(batch["images"], device=device)
+            images = batch["images"]
+            feats = backbone.encode(images=images, device=device).unsqueeze(1)
+            graph = build_bipartite_batch(feats=feats, targets=targets)
+            logits = gnn_model(graph)
             loss = bce_logits_loss(logits, targets, pos_weight=pos_weight)
             losses.append(float(loss.item()))
             all_logits.append(logits.detach().cpu().numpy())
@@ -188,7 +226,7 @@ def train() -> None:
     log(f"Seed set to {seed}, deterministic={deterministic}")
 
     smoke = args.mode == "smoke"
-    train_epochs = 2 if smoke else int(cfg["training"]["stage1"].get("epochs", 20))
+    train_epochs = 1 if smoke else int(cfg["training"]["stage1"].get("epochs", 20))
     batch_size = 4 if smoke else int(cfg["batching"].get("batch_size", 32))
     eval_batch_size = 4 if smoke else int(cfg["batching"].get("eval_batch_size", 64))
 
@@ -221,15 +259,15 @@ def train() -> None:
     label_freq = label_info["freq"]
     num_labels = len(label_vocab)
     log(f"Label space size: {num_labels}")
-    log("Building encoder backbones (first run may download pretrained weights)...")
-    model = build_model(cfg=cfg, num_labels=num_labels, device=device)
+    log("Building encoder backbones and GNN head (first run may download pretrained weights)...")
+    backbone, gnn_model, _ = build_backbone_and_gnn(cfg=cfg, num_labels=num_labels, device=device)
     log("Model construction complete")
     pos_weight = class_pos_weights(label_frequencies=label_freq, label_vocab=label_vocab).to(device)
 
     lr = float(cfg["training"]["stage1"].get("lr_head", 1e-3))
     weight_decay = float(cfg["optimization"].get("weight_decay", 1e-4))
     optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
+        list(gnn_model.parameters()),
         lr=lr,
         weight_decay=weight_decay,
     )
@@ -243,18 +281,28 @@ def train() -> None:
     best_path = run_dir / "best.pt"
     log(f"Training for epochs={train_epochs}, batch_size={batch_size}, eval_batch_size={eval_batch_size}")
     for epoch in range(1, train_epochs + 1):
-        model.train()
+        backbone.eval()
+        gnn_model.train()
         train_losses: List[float] = []
         for batch in tqdm(train_loader, desc=f"{args.run_name} epoch {epoch}/{train_epochs}"):
             targets = batch["targets"].to(device)
-            logits = model(batch["images"], device=device)
+            images = batch["images"]
+            feats = backbone.encode(images=images, device=device).unsqueeze(1)
+            graph = build_bipartite_batch(feats=feats, targets=targets)
+            logits = gnn_model(graph)
             loss = bce_logits_loss(logits, targets, pos_weight=pos_weight)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             train_losses.append(float(loss.item()))
 
-        val_metrics = run_eval(model=model, loader=val_loader, device=device, pos_weight=pos_weight)
+        val_metrics = run_eval(
+            backbone=backbone,
+            gnn_model=gnn_model,
+            loader=val_loader,
+            device=device,
+            pos_weight=pos_weight,
+        )
         epoch_row = {
             "epoch": epoch,
             "train_loss": float(np.mean(train_losses)) if train_losses else 0.0,
@@ -272,7 +320,8 @@ def train() -> None:
             best_map = val_metrics["map"]
             torch.save(
                 {
-                    "model_state": model.state_dict(),
+                    "backbone_state": backbone.state_dict(),
+                    "gnn_state": gnn_model.state_dict(),
                     "label_vocab": label_vocab,
                     "config": cfg,
                 },
@@ -282,8 +331,15 @@ def train() -> None:
 
     log("Running final test evaluation using best checkpoint...")
     checkpoint = torch.load(best_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state"])
-    test_metrics = run_eval(model=model, loader=test_loader, device=device, pos_weight=pos_weight)
+    backbone.load_state_dict(checkpoint["backbone_state"])
+    gnn_model.load_state_dict(checkpoint["gnn_state"])
+    test_metrics = run_eval(
+        backbone=backbone,
+        gnn_model=gnn_model,
+        loader=test_loader,
+        device=device,
+        pos_weight=pos_weight,
+    )
     payload = {
         "run_name": args.run_name,
         "mode": args.mode,
@@ -302,3 +358,4 @@ def train() -> None:
 
 if __name__ == "__main__":
     train()
+
