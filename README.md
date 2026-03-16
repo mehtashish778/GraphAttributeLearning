@@ -1,3 +1,15 @@
+---
+title: GraphAttributeLearning
+emoji: 🪑
+colorFrom: gray
+colorTo: red
+sdk: gradio
+sdk_version: "6.9.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
 # Adjective-Aware Object Embedding
 
 This project builds adjective-aware object embeddings using:
