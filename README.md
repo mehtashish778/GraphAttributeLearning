@@ -125,6 +125,30 @@ Important: the processing pipeline is strict chair-only (`primary_object_class: 
 
   `python scripts/compare_baseline_vs_gnn.py --baseline-run smoke_baseline --gnn-run smoke_gnn`
 
+### 3) Inference and Gradio UI
+
+#### CLI inference
+
+- Baseline checkpoint:
+
+  `python scripts/infer.py --checkpoint outputs/smoke_baseline/best.pt --image path/to/chair.jpg --top-k 5 --threshold 0.5`
+
+- GNN checkpoint:
+
+  `python scripts/infer.py --checkpoint outputs/smoke_gnn/best.pt --image path/to/chair.jpg --top-k 5 --threshold 0.5`
+
+#### Gradio app (local)
+
+- Launch:
+
+  `python app.py`
+
+- Then:
+  - Open the printed URL.
+  - Upload a chair image.
+  - Choose **baseline** or **gnn**.
+  - Adjust threshold/top-k as needed.
+
 ## Expected Outputs
 
 Data artifacts:
