@@ -68,7 +68,8 @@ class BipartiteMessagePassingLayer(nn.Module):
         # Messages from attributes to objects.
         attr_msgs = flat_attrs.index_select(0, src_attr)  # [E, Din_attr]
         attr_msgs = self.attr_to_obj(attr_msgs)  # [E, Din]
-        w = edge_weight.view(-1, 1)
+        attr_msgs = attr_msgs.to(flat_objects.dtype)
+        w = edge_weight.view(-1, 1).to(flat_objects.dtype)
         weighted_msgs = attr_msgs * w
 
         # Aggregate messages per object index.

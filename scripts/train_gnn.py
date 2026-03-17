@@ -53,7 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--overrides-json", type=str, default="")
     parser.add_argument("--mode", type=str, default="full", choices=["smoke", "full"])
-    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--device", type=str, default="auto",
+                    help="Device: auto, cuda, cpu, or cuda:N (e.g. cuda:1)")
     return parser.parse_args()
 
 
@@ -272,6 +273,10 @@ def train() -> None:
         weight_decay=weight_decay,
     )
 
+    grad_accum_steps = int(cfg["optimization"].get("gradient_accumulation_steps", 1))
+    use_amp = bool(cfg["optimization"].get("mixed_precision", False)) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
     output_root = REPO_ROOT / run_cfg.get("output_dir", "outputs")
     run_dir = output_root / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -279,22 +284,47 @@ def train() -> None:
     history: List[Dict[str, Any]] = []
     best_map = -1.0
     best_path = run_dir / "best.pt"
-    log(f"Training for epochs={train_epochs}, batch_size={batch_size}, eval_batch_size={eval_batch_size}")
+    log(
+        f"Training for epochs={train_epochs}, batch_size={batch_size}, "
+        f"eval_batch_size={eval_batch_size}, grad_accum_steps={grad_accum_steps}, amp={use_amp}"
+    )
     for epoch in range(1, train_epochs + 1):
         backbone.eval()
         gnn_model.train()
         train_losses: List[float] = []
-        for batch in tqdm(train_loader, desc=f"{args.run_name} epoch {epoch}/{train_epochs}"):
+        step_times: List[float] = []
+        start_epoch = time.time()
+        for step_idx, batch in enumerate(
+            tqdm(train_loader, desc=f"{args.run_name} epoch {epoch}/{train_epochs}")
+        ):
+            batch_start = time.time()
             targets = batch["targets"].to(device)
             images = batch["images"]
             feats = backbone.encode(images=images, device=device).unsqueeze(1)
             graph = build_bipartite_batch(feats=feats, targets=targets)
-            logits = gnn_model(graph)
-            loss = bce_logits_loss(logits, targets, pos_weight=pos_weight)
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-            train_losses.append(float(loss.item()))
+
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                logits = gnn_model(graph)
+                loss = bce_logits_loss(logits, targets, pos_weight=pos_weight)
+                loss = loss / grad_accum_steps
+
+            scaler.scale(loss).backward()
+            if (step_idx + 1) % grad_accum_steps == 0 or (step_idx + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(gnn_model.parameters(), cfg["optimization"].get("grad_clip_norm", 1.0))
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+
+            train_losses.append(float(loss.item()) * grad_accum_steps)
+            step_times.append(time.time() - batch_start)
+
+        epoch_time = time.time() - start_epoch
+        avg_step = float(np.mean(step_times)) if step_times else 0.0
+        log(
+            f"Epoch {epoch} finished in {epoch_time:.1f}s, "
+            f"avg_step_time={avg_step:.3f}s, steps={len(step_times)}"
+        )
 
         val_metrics = run_eval(
             backbone=backbone,
