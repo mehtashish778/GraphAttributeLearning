@@ -67,9 +67,9 @@ data/raw/
 data/processed/
 checkpoints/
 runs/
-outputs/
 artifacts/
 
+.pt
 .jpeg
 .jpg
 .png
