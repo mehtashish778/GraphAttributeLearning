@@ -6,6 +6,7 @@ from typing import Any, Dict
 import gradio as gr
 import torch
 from PIL import Image
+from huggingface_hub import hf_hub_download
 
 import sys
 from pathlib import Path as _Path
@@ -18,8 +19,12 @@ if str(SRC_DIR) not in sys.path:
 from infer.pipeline import LoadedModel, load_checkpoint, predict_image
 
 
-DEFAULT_BASELINE_CKPT = Path("outputs/smoke_baseline/best.pt")
-DEFAULT_GNN_CKPT = Path("outputs/smoke_gnn/best.pt")
+MODEL_REPO_ID = "alphamike/GraphAttributeLearning_Model"
+MODEL_FILENAMES = {
+    "baseline": "baseline/best.pt",
+    "gnn1": "gnn1/best.pt",
+    "gnn2": "gnn2/best.pt",
+}
 
 
 class ModelRegistry:
@@ -47,7 +52,21 @@ def infer_gradio(
 ) -> Any:
     if image is None:
         return [], "No image provided."
-    path = Path(checkpoint_path).expanduser()
+    # Resolve checkpoint: either use the textbox value as filename within the model repo
+    # or fall back to the default mapping for the selected model_type.
+    filename = (checkpoint_path or "").strip() or MODEL_FILENAMES.get(model_type, "")
+    if not filename:
+        return [], f"Unknown model_type '{model_type}'."
+    try:
+        local_ckpt_path = hf_hub_download(
+            repo_id=MODEL_REPO_ID,
+            filename=filename,
+            repo_type="model",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return [], f"Error downloading checkpoint from Hub: {exc}"
+
+    path = Path(local_ckpt_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     try:
         key = f"{model_type}:{path}"
@@ -76,23 +95,27 @@ def infer_gradio(
 
 
 with gr.Blocks() as demo:
-    gr.Markdown("# Adjective-Aware Chair Attributes\nSelect baseline or GNN, upload an image, and view attribute scores.")
+    gr.Markdown(
+        "# Adjective-Aware Chair Attributes\n"
+        "Select baseline, GNN 1, or GNN 2, upload an image, and view attribute scores.\n\n"
+        f"Models are loaded from Hugging Face model repo: `{MODEL_REPO_ID}`."
+    )
 
     with gr.Row():
         with gr.Column(scale=1):
             image_input = gr.Image(type="pil", label="Chair image")
             model_type = gr.Radio(
-                choices=["baseline", "gnn"],
+                choices=["baseline", "gnn1", "gnn2"],
                 value="baseline",
                 label="Model type",
             )
             checkpoint = gr.Textbox(
-                value=str(DEFAULT_BASELINE_CKPT),
-                label="Checkpoint path",
+                value=MODEL_FILENAMES["baseline"],
+                label="Checkpoint filename (within Hub repo)",
             )
 
             def _sync_ckpt(choice: str) -> str:
-                return str(DEFAULT_GNN_CKPT if choice == "gnn" else DEFAULT_BASELINE_CKPT)
+                return MODEL_FILENAMES.get(choice, MODEL_FILENAMES["baseline"])
 
             model_type.change(_sync_ckpt, inputs=model_type, outputs=checkpoint)
 
