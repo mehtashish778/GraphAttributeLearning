@@ -69,7 +69,8 @@ checkpoints/
 runs/
 artifacts/
 
-.pt
+.outputs/**/*.pt
+
 .jpeg
 .jpg
 .png
