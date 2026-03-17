@@ -1,0 +1,9 @@
+{
+  "black": 0,
+  "blue": 1,
+  "metal": 2,
+  "plastic": 3,
+  "red": 4,
+  "white": 5,
+  "wooden": 6
+}
